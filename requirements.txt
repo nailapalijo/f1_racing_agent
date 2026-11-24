@@ -1,0 +1,10 @@
+﻿streamlit>=1.40
+pandas>=2.2
+plotly>=5.24
+numpy>=1.26
+torch==2.5.1
+transformers==4.46.3
+sentencepiece
+accelerate
+faster-whisper==1.2.1
+av==18.1.0
