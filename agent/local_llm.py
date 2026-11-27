@@ -2,22 +2,15 @@
 import os
 from pathlib import Path
 
-# ==========================================
-# FORCE OFFLINE MODE
-# ==========================================
-
-os.environ["HF_HUB_OFFLINE"] = "1"
-os.environ["TRANSFORMERS_OFFLINE"] = "1"
-
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
 
 # ==========================================
-# LOCAL QWEN MODEL
+# APEX MODEL CONFIGURATION
 # ==========================================
 
-MODEL_PATH = (
+LOCAL_MODEL_PATH = (
     Path.home()
     / ".cache"
     / "huggingface"
@@ -27,12 +20,17 @@ MODEL_PATH = (
     / "989aa7980e4cf806f80c7fef2b1adb7bc71aa306"
 )
 
+LOCAL_MODEL_ID = "Qwen/Qwen2.5-1.5B-Instruct"
+
+# Smaller model for Streamlit Cloud
+CLOUD_MODEL_ID = "Qwen/Qwen2.5-0.5B-Instruct"
+
 tokenizer = None
 model = None
 
 
 # ==========================================
-# LOAD LOCAL MODEL
+# LOAD MODEL
 # ==========================================
 
 def load_model():
@@ -42,29 +40,35 @@ def load_model():
     if model is not None:
         return
 
-    if not (MODEL_PATH / "model.safetensors").exists():
+    if (LOCAL_MODEL_PATH / "model.safetensors").exists():
 
-        raise FileNotFoundError(
-            f"Qwen model not found at: {MODEL_PATH}"
-        )
+        model_source = str(LOCAL_MODEL_PATH)
+        local_mode = True
 
-    print("Loading APEX local Qwen model...")
+        print("Loading APEX local Qwen 1.5B...")
+
+    else:
+
+        model_source = CLOUD_MODEL_ID
+        local_mode = False
+
+        print("Loading APEX Cloud Qwen 0.5B...")
 
     tokenizer = AutoTokenizer.from_pretrained(
-        str(MODEL_PATH),
-        local_files_only=True
+        model_source,
+        local_files_only=local_mode
     )
 
     model = AutoModelForCausalLM.from_pretrained(
-        str(MODEL_PATH),
-        local_files_only=True,
-        dtype=torch.float32,
+        model_source,
+        local_files_only=local_mode,
+        torch_dtype=torch.float32,
         low_cpu_mem_usage=True
     )
 
     model.eval()
 
-    print("APEX Qwen model ready!")
+    print("APEX AI model ready!")
 
 
 # ==========================================
@@ -74,85 +78,73 @@ def load_model():
 def generate_response(question):
 
     if not question or not question.strip():
-
         return "Please ask a Formula 1 question."
 
-    load_model()
+    try:
 
-    messages = [
+        load_model()
 
-        {
-            "role": "system",
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are APEX, a professional Formula 1 assistant. "
+                    "Always answer in clear, natural English, even when "
+                    "the user asks in Urdu or Roman Urdu. "
+                    "Answer the actual question directly. "
+                    "Explain F1 drivers, teams, circuits, rules, engines, "
+                    "aerodynamics, tyres, DRS, pit stops and strategies. "
+                    "Use simple English. Never invent live race data "
+                    "or statistics. If unsure, say so. "
+                    "Stay focused on Formula 1 and motorsport."
+                )
+            },
+            {
+                "role": "user",
+                "content": question.strip()
+            }
+        ]
 
-            "content": (
-                "You are APEX, an intelligent and professional "
-                "Formula 1 racing assistant. "
-
-                "IMPORTANT LANGUAGE RULE: "
-                "Always answer in clear, natural English, "
-                "regardless of whether the user asks in English, "
-                "Urdu, or Roman Urdu. Never answer in Urdu. "
-
-                "Answer the user's actual question directly. "
-
-                "Explain Formula 1 drivers, teams, circuits, "
-                "rules, engines, aerodynamics, tyres, DRS, "
-                "pit stops and racing strategies clearly. "
-
-                "Use simple English when explaining technical topics. "
-
-                "Organize longer answers with headings or bullet points "
-                "when useful. "
-
-                "Do not invent live race data, results, or statistics. "
-
-                "If you do not know something, clearly say so. "
-
-                "Stay focused on Formula 1 and motorsport."
-            )
-        },
-
-        {
-            "role": "user",
-            "content": question.strip()
-        }
-
-    ]
-
-    prompt = tokenizer.apply_chat_template(
-        messages,
-        tokenize=False,
-        add_generation_prompt=True
-    )
-
-    inputs = tokenizer(
-        prompt,
-        return_tensors="pt",
-        truncation=True,
-        max_length=2048
-    )
-
-    with torch.inference_mode():
-
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=300,
-            do_sample=False,
-            repetition_penalty=1.08,
-            pad_token_id=tokenizer.eos_token_id
+        prompt = tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True
         )
 
-    answer_tokens = outputs[
-        0,
-        inputs["input_ids"].shape[1]:
-    ]
+        inputs = tokenizer(
+            prompt,
+            return_tensors="pt",
+            truncation=True,
+            max_length=1024
+        )
 
-    answer = tokenizer.decode(
-        answer_tokens,
-        skip_special_tokens=True
-    ).strip()
+        with torch.inference_mode():
 
-    if not answer:
-        return "APEX could not generate an answer. Please try again."
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=200,
+                do_sample=False,
+                repetition_penalty=1.08,
+                pad_token_id=tokenizer.eos_token_id
+            )
 
-    return answer
+        answer_tokens = outputs[
+            0,
+            inputs["input_ids"].shape[1]:
+        ]
+
+        answer = tokenizer.decode(
+            answer_tokens,
+            skip_special_tokens=True
+        ).strip()
+
+        if not answer:
+            return "APEX could not generate an answer. Please try again."
+
+        return answer
+
+    except Exception as e:
+
+        print("APEX AI ERROR:", str(e))
+
+        return f"APEX AI engine error: {str(e)}"
